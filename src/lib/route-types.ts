@@ -1,14 +1,12 @@
 /**
  * Route prop shapes, written out explicitly.
  *
- * Next 16 supplies `PageProps<"/route">` and `RouteContext<"/route">` as globals,
- * but this project runs Next 15 deliberately: Next 16's static-generation pass
- * crashes while prerendering its own /_global-error and /_not-found routes
- * (vercel/next.js#95741), and the only known workaround disables minification —
- * which the client, reviewing on mobile data, would pay for on every load.
+ * Next 16 also generates `PageProps<"/route">` and `RouteContext<"/route">`
+ * globals, which are equivalent. These are spelled out instead so the route
+ * handlers do not depend on a generated `.next/types` file being present — a
+ * fresh clone typechecks before it has ever been built or run.
  *
- * `params` and `searchParams` are Promises in both versions, so nothing about the
- * handler bodies changes.
+ * `params` and `searchParams` are Promises and must be awaited.
  */
 
 export type IdParams = { params: Promise<{ id: string }> };
