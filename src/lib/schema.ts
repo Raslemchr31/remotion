@@ -182,83 +182,60 @@ export const editsSchema = z.object({
 });
 export type Edits = z.infer<typeof editsSchema>;
 
+
 /* -------------------------------------------------------------------------- */
-/*  Project record                                                            */
+/*  Project                                                                   */
 /* -------------------------------------------------------------------------- */
 
 /**
- * A project is not one mutable record. It is a set of small documents in Blob
- * storage, each written by exactly one author:
+ * A project lives at projects/{token}/ as a handful of write-once JSON documents:
  *
- *   projects/{id}/record.json      created once by the upload route
- *   projects/{id}/source.json      written once by the normalize workflow
- *   projects/{id}/edits.json       written only by Claude
- *   projects/{id}/rounds/{n}.json  written only by the client, append-only
- *   projects/{id}/approved.json    written once by the approve route
- *   projects/{id}/render.json      written once by the render workflow
+ *   video.json         the transcoded source plus its measurements
+ *   edits/{n}.json     one per version, written by Claude
+ *   rounds/{n}.json    one per Submit press, written by the client
+ *   done.json          written when the client says he is happy
+ *   final.json         the rendered MP4, written by Claude
  *
- * Nothing is ever read-modify-written by two authors, so Claude posting edits
- * while the client is submitting comments cannot lose either write. Status is
- * *derived* from which documents exist (see deriveStatus) rather than stored,
- * which is what removes the last shared mutable field.
+ * Nothing is ever overwritten. That is not tidiness: Vercel Blob cannot cache for
+ * less than 60 seconds, so a mutable document at a stable path can serve a minute
+ * of stale reads — long enough for the client to refresh and still see the old
+ * cut. Immutable documents plus list() for discovery makes every read correct.
+ *
+ * `token` is the whole security model. It is 43 random characters, it is the only
+ * thing in the client's link, and holding it is what authorises watching,
+ * commenting and downloading. There is no login, which is the point: the client
+ * taps a link his phone already has.
  */
 
-export const projectStatusSchema = z.enum([
-  "normalizing",
-  "awaiting_first_edit",
-  "in_review",
-  "awaiting_edits",
-  "rendering",
-  "done",
-  "render_failed",
-  "error",
-]);
-export type ProjectStatus = z.infer<typeof projectStatusSchema>;
-
-/** projects/{id}/record.json — immutable after the upload completes. */
-export const recordDocSchema = z.object({
-  id: z.string(),
+/** projects/{token}/video.json — written once, when the project is published. */
+export const videoDocSchema = z.object({
+  token: z.string().min(20),
   title: z.string(),
-  createdAt: z.string(),
-  /** What the client typed on the upload screen. Claude's first instruction. */
+  /** What the client asked for in chat. Kept so Claude can re-read it later. */
   brief: z.string().default(""),
-  /** Raw phone upload, before transcoding. */
-  originalUrl: z.string().url(),
+  createdAt: z.string(),
+  /** Browser-playable H.264/AAC transcode of whatever the phone produced. */
+  sourceUrl: z.string().url(),
   originalFilename: z.string(),
-});
-export type RecordDoc = z.infer<typeof recordDocSchema>;
-
-export const probeSchema = z.object({
+  /** Measured by ffprobe. Every timeline calculation derives from these. */
   durationSec: z.number().min(0.1),
   fps: z.number().min(1).max(120),
   width: z.number().int().min(16),
   height: z.number().int().min(16),
 });
-export type Probe = z.infer<typeof probeSchema>;
+export type VideoDoc = z.infer<typeof videoDocSchema>;
 
-/** projects/{id}/source.json — the normalize workflow's one and only write. */
-export const sourceDocSchema = z.object({
-  normalizedUrl: z.string().url().optional(),
-  probe: probeSchema.optional(),
-  normalizedAt: z.string().optional(),
-  /** Set instead of the above when ffmpeg could not read the upload. */
-  error: z.string().optional(),
-});
-export type SourceDoc = z.infer<typeof sourceDocSchema>;
-
-/**
- * projects/{id}/edits.json — Claude's write.
- *
- * `answeredRounds` is how the client's page knows whether Claude has caught up:
- * it is the highest round number these edits take into account. Keeping it here
- * rather than stamping the round documents is what keeps the two writers on
- * disjoint paths.
- */
+/** projects/{token}/edits/{n}.json — Claude's write. */
 export const editsDocSchema = z.object({
-  edits: editsSchema,
   version: z.number().int().min(1),
+  edits: editsSchema,
+  /**
+   * Highest round these edits take into account. This is how the client's page
+   * knows whether Claude has caught up, without either side writing to the
+   * other's documents.
+   */
   answeredRounds: z.number().int().min(0).default(0),
-  /** Short message shown to the client, e.g. "raised the price overlay". */
+  /** One line for the client, in his language, saying what changed. */
   note: z.string().optional(),
   postedAt: z.string(),
 });
@@ -266,92 +243,102 @@ export type EditsDoc = z.infer<typeof editsDocSchema>;
 
 export const commentSchema = z.object({
   id: z.string(),
-  /** Position on the FINAL timeline, in seconds. */
+  /** Where the client tapped, in seconds on the FINAL timeline. */
   timeSec: z.number().min(0),
   text: z.string().min(1),
 });
 export type Comment = z.infer<typeof commentSchema>;
 
-/** projects/{id}/rounds/{n}.json — one Submit press. Immutable once written. */
-export const commentRoundSchema = z.object({
+/** projects/{token}/rounds/{n}.json — one Submit press. Immutable. */
+export const roundSchema = z.object({
   round: z.number().int().min(1),
   submittedAt: z.string(),
-  /** The edits version the client was looking at when he commented. */
+  /** The version the client was watching when he wrote these. */
   onVersion: z.number().int().min(1),
   comments: z.array(commentSchema).min(1),
 });
-export type CommentRound = z.infer<typeof commentRoundSchema>;
+export type Round = z.infer<typeof roundSchema>;
 
-/** projects/{id}/approved.json — written by the approve route. */
-export const approvalDocSchema = z.object({
-  approvedAt: z.string(),
+/** projects/{token}/done.json — the client is happy; render the final. */
+export const doneDocSchema = z.object({
+  doneAt: z.string(),
   version: z.number().int().min(1),
 });
-export type ApprovalDoc = z.infer<typeof approvalDocSchema>;
+export type DoneDoc = z.infer<typeof doneDocSchema>;
 
-/** projects/{id}/render.json — the render workflow's one and only write. */
-export const renderDocSchema = z.object({
-  renderUrl: z.string().url().optional(),
-  version: z.number().int().optional(),
-  renderedAt: z.string().optional(),
-  error: z.string().optional(),
+/** projects/{token}/final.json — the rendered MP4 the client downloads. */
+export const finalDocSchema = z.object({
+  url: z.string().url(),
+  version: z.number().int().min(1),
+  renderedAt: z.string(),
 });
-export type RenderDoc = z.infer<typeof renderDocSchema>;
+export type FinalDoc = z.infer<typeof finalDocSchema>;
 
-/** Everything about a project, assembled from its documents for one response. */
+/**
+ * Four states, derived from which documents exist rather than stored, so Claude
+ * and the client can never disagree about whose turn it is.
+ *
+ *   preparing      no edits yet — Claude has not posted a cut
+ *   ready          a cut is up; the client's turn to watch and comment
+ *   claude_working the client submitted comments Claude has not answered,
+ *                  or he pressed Done and the final is not rendered yet
+ *   done           the final MP4 exists; the download works
+ */
+export const projectStatusSchema = z.enum(["preparing", "ready", "claude_working", "done"]);
+export type ProjectStatus = z.infer<typeof projectStatusSchema>;
+
+export function deriveStatus(parts: {
+  editsDoc?: EditsDoc;
+  rounds: Round[];
+  done?: DoneDoc;
+  final?: FinalDoc;
+}): ProjectStatus {
+  if (parts.final) return "done";
+  if (!parts.editsDoc) return "preparing";
+  if (parts.done) return "claude_working";
+  const latestRound = parts.rounds.reduce((max, r) => Math.max(max, r.round), 0);
+  return latestRound > parts.editsDoc.answeredRounds ? "claude_working" : "ready";
+}
+
+/** Everything the review page and Claude's scripts need, assembled. */
 export type Project = {
-  id: string;
+  token: string;
   title: string;
   brief: string;
   createdAt: string;
-  originalUrl: string;
-  originalFilename: string;
   status: ProjectStatus;
-  normalizedUrl?: string;
-  probe?: Probe;
+  video: VideoDoc;
   edits?: Edits;
-  editsVersion?: number;
+  version?: number;
   answeredRounds: number;
-  claudeNote?: string;
-  rounds: CommentRound[];
-  renderUrl?: string;
-  renderedVersion?: number;
-  /** Normalization or render failure text, whichever applies to the status. */
-  errorMessage?: string;
+  note?: string;
+  rounds: Round[];
+  /**
+   * He pressed Done and the final is not rendered yet.
+   *
+   * Distinct from `status`, which collapses "waiting for an edit" and "waiting for
+   * the final render" into one claude_working value. The page has to tell those
+   * apart: offering "add a comment" to someone who just said he is happy is
+   * contradictory, and it would put a second Done button next to the message
+   * telling him he is already done.
+   */
+  awaitingFinal: boolean;
+  finalUrl?: string;
+  finalVersion?: number;
 };
 
-/**
- * The single definition of "where is this project up to", computed from which
- * documents exist. Both the review page and Claude's polling loop read this, so
- * they can never disagree about whose turn it is.
- */
-export function deriveStatus(parts: {
-  source?: SourceDoc;
-  editsDoc?: EditsDoc;
-  rounds: CommentRound[];
-  approval?: ApprovalDoc;
-  render?: RenderDoc;
-}): ProjectStatus {
-  if (parts.render?.renderUrl) return "done";
-  if (parts.render?.error) return "render_failed";
-  if (parts.approval) return "rendering";
-
-  if (!parts.source) return "normalizing";
-  if (parts.source.error || !parts.source.normalizedUrl) return "error";
-
-  if (!parts.editsDoc) return "awaiting_first_edit";
-
-  const latestRound = parts.rounds.reduce((max, r) => Math.max(max, r.round), 0);
-  return latestRound > parts.editsDoc.answeredRounds ? "awaiting_edits" : "in_review";
+/** Rounds Claude has not answered yet — the only ones it needs to act on. */
+export function unansweredRounds(project: Project): Round[] {
+  return project.rounds.filter((r) => r.round > project.answeredRounds);
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Timeline maths â€” shared by the composition, the player and the CI render   */
+/*  Timeline maths — shared by the composition, the player and the render      */
 /* -------------------------------------------------------------------------- */
 
 export const secToFrames = (sec: number, fps: number) => Math.round(sec * fps);
 
-/** Total seconds of source kept after trims. No trims means the whole video. */
+/** Seconds of source kept after trims. No trims means the whole video. */
 export function trimmedDurationSec(edits: Pick<Edits, "trims" | "sourceDurationSec">): number {
   if (edits.trims.length === 0) return edits.sourceDurationSec;
   return edits.trims.reduce(
@@ -368,14 +355,13 @@ export function finalDurationSec(edits: Edits): number {
 }
 
 export function finalDurationInFrames(edits: Edits): number {
-  // Never emit 0 or a negative duration: Remotion rejects those outright.
+  // Never emit zero or a negative duration: Remotion rejects those outright.
   return Math.max(1, secToFrames(finalDurationSec(edits), edits.fps));
 }
 
 /**
- * Second on the final timeline where the video body starts. Client comment
- * timestamps are on the final timeline, so this is the offset Claude needs to
- * translate a comment time back to a source-video time.
+ * Second on the final timeline where the video body starts. Comment timestamps are
+ * on the final timeline, so this is the offset needed to translate one back to a
+ * source-video time — which is what `trims` are expressed in.
  */
 export const bodyStartSec = (edits: Edits): number => edits.intro?.durationSec ?? 0;
-

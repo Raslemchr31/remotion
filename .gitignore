@@ -45,3 +45,8 @@ out/
 .env.local
 .vercel
 .env*
+
+# Claude workspace state
+.current-project
+edits.json
+work/

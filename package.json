@@ -8,8 +8,11 @@
     "start": "next start",
     "lint": "eslint",
     "studio": "remotion studio",
-    "render": "remotion render MainVideo",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "video:new": "tsx scripts/publish.mts",
+    "video:comments": "tsx scripts/comments.mts",
+    "video:update": "tsx scripts/update.mts",
+    "video:final": "tsx scripts/finalize.mts"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.512",
@@ -17,6 +20,8 @@
     "@remotion/player": "^4.0.512",
     "@remotion/zod-types": "^4.0.512",
     "@vercel/blob": "^2.8.0",
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0",
     "next": "^16.3.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -31,6 +36,7 @@
     "eslint": "^9",
     "eslint-config-next": "^16.3.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.12",
     "typescript": "^5"
   },
   "overrides": {
