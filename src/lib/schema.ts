@@ -365,3 +365,44 @@ export function finalDurationInFrames(edits: Edits): number {
  * source-video time — which is what `trims` are expressed in.
  */
 export const bodyStartSec = (edits: Edits): number => edits.intro?.durationSec ?? 0;
+
+/* -------------------------------------------------------------------------- */
+/*  Intake — how a video gets in                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A video the client has sent but Claude has not turned into a project yet.
+ *
+ * This exists because Claude Code on a phone caps chat attachments at 30 MB, which
+ * no real phone video respects. So the phone uploads straight to Blob from a
+ * bookmarked page and Claude collects it from storage afterwards — the file never
+ * travels through the chat or through a serverless function.
+ *
+ *   intake/{code}.json           written by the send page
+ *   intake/{code}.consumed.json  written by Claude once it has published a project
+ *
+ * Pending means the first exists and the second does not. Nothing is mutated, so an
+ * ingest that dies halfway simply leaves the upload pending and retryable.
+ */
+
+/**
+ * Six characters the client can read off his screen and say out loud. No vowels (so
+ * it cannot spell anything), and no 0/O/1/I/L to misread.
+ */
+export const INTAKE_CODE_ALPHABET = "23456789BCDFGHJKMNPQRSTVWXYZ";
+
+export const intakeSchema = z.object({
+  code: z.string().min(4).max(12),
+  uploadedAt: z.string(),
+  url: z.string().url(),
+  filename: z.string(),
+  sizeBytes: z.number().int().min(1),
+});
+export type Intake = z.infer<typeof intakeSchema>;
+
+export const intakeConsumedSchema = z.object({
+  consumedAt: z.string(),
+  /** The project token this upload became. */
+  projectToken: z.string(),
+});
+export type IntakeConsumed = z.infer<typeof intakeConsumedSchema>;

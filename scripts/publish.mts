@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { Readable } from "node:stream";
@@ -15,7 +15,7 @@ import { FFMPEG, FFPROBE, flag, rememberProject, requireEnv, reviewLink, run } f
  * Transcodes it, measures it, uploads it, creates a pass-through first version so
  * the link is never broken, prints the link and the numbers needed to write edits.
  *
- *   npm run video:new -- <video file or https URL> [--title "..."] [--brief "..."]
+ *   npm run video:new -- <code from the send page> [--brief "what he asked for"]
  */
 
 requireEnv("BLOB_READ_WRITE_TOKEN");
@@ -23,33 +23,70 @@ requireEnv("BLOB_READ_WRITE_TOKEN");
 const token = randomBytes(32).toString("base64url");
 await mkdir("work", { recursive: true });
 
-const input = process.argv[2];
-if (!input || input.startsWith("--")) {
-  console.error(
-    'usage: npm run video:new -- <video file or https URL> [--title "..."] [--brief "..."]',
-  );
-  process.exit(1);
-}
+const input = process.argv[2]?.startsWith("--") ? undefined : process.argv[2];
 
-/**
- * A path or an https URL. The path is the normal case: the client attaches the video
- * in the chat and it lands on this session's filesystem, so Claude already has it.
- */
-let file = input;
-const filename = basename(input.startsWith("http") ? new URL(input).pathname : input) || "video.mp4";
-
-if (/^https?:\/\//.test(input)) {
-  file = `work/incoming-${filename}`;
-  console.log(`Fetching ${input}`);
-  const response = await fetch(input);
+async function download(url: string, name: string): Promise<string> {
+  const target = `work/incoming-${name}`;
+  console.log(`Fetching ${name}`);
+  const response = await fetch(url);
   if (!response.ok || !response.body) {
-    console.error(`Could not fetch that URL: ${response.status} ${response.statusText}`);
+    console.error(`Could not fetch the upload: ${response.status} ${response.statusText}`);
     process.exit(1);
   }
   await pipeline(
     Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-    createWriteStream(file),
+    createWriteStream(target),
   );
+  return target;
+}
+
+/**
+ * Three ways a video arrives, because the surface decides which is possible:
+ *
+ *   a 6-char code  what the client read off the send page — the normal case, since
+ *                  Claude Code on a phone caps a chat attachment at 30 MB
+ *   nothing        the newest upload waiting in storage
+ *   a path or URL  a file Claude already has, or anything reachable over https
+ *
+ * Everything after this block is identical for all three.
+ */
+let file: string;
+let filename: string;
+let intakeCode: string | undefined;
+
+const looksLikeCode = input !== undefined && /^[0-9A-Za-z]{4,12}$/.test(input) && !existsSync(input);
+
+if (input === undefined || looksLikeCode) {
+  const { listPendingIntakes, loadIntake } = await import("../src/lib/store");
+
+  const intake = looksLikeCode
+    ? await loadIntake(input.toUpperCase())
+    : (await listPendingIntakes())[0];
+
+  if (!intake) {
+    console.error(
+      looksLikeCode
+        ? `No upload found with code ${input.toUpperCase()}. Ask him to check the code on the send page.`
+        : `No video is waiting.
+
+Ask him to open the send page on his phone, pick a video, and tell you the code.
+Or pass a file path or an https URL directly.`,
+    );
+    process.exit(1);
+  }
+
+  intakeCode = intake.code;
+  filename = intake.filename;
+  console.log(
+    `Upload ${intake.code}: ${intake.filename} (${(intake.sizeBytes / 1e6).toFixed(1)} MB, sent ${intake.uploadedAt})`,
+  );
+  file = await download(intake.url, intake.filename);
+} else if (/^https?:\/\//.test(input)) {
+  filename = basename(new URL(input).pathname) || "video.mp4";
+  file = await download(input, filename);
+} else {
+  file = input;
+  filename = basename(input);
 }
 
 const title = flag(process.argv, "--title") ?? filename.replace(extname(filename), "");
@@ -157,6 +194,13 @@ await putEdits(token, {
   answeredRounds: 0,
   postedAt: new Date().toISOString(),
 });
+
+// Mark the upload used so a later publish does not pick it up again. Done last, so a
+// failure anywhere above leaves it pending and the ingest stays retryable.
+if (intakeCode) {
+  const { markIntakeConsumed } = await import("../src/lib/store");
+  await markIntakeConsumed(intakeCode, token);
+}
 
 rememberProject(token);
 await rm("work", { recursive: true, force: true });

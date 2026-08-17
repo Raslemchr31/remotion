@@ -5,9 +5,12 @@ import {
   doneDocSchema,
   editsDocSchema,
   finalDocSchema,
+  intakeConsumedSchema,
+  intakeSchema,
   roundSchema,
   videoDocSchema,
   type DoneDoc,
+  type Intake,
   type EditsDoc,
   type FinalDoc,
   type Project,
@@ -180,4 +183,58 @@ export async function latestProject(): Promise<Project | undefined> {
   return projects
     .filter((p): p is Project => p !== undefined)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Intake                                                                    */
+/* -------------------------------------------------------------------------- */
+
+const INTAKE = "intake";
+
+export const intakePaths = {
+  record: (code: string) => `${INTAKE}/${code}.json`,
+  consumed: (code: string) => `${INTAKE}/${code}.consumed.json`,
+};
+
+export async function putIntake(doc: Intake): Promise<void> {
+  await putJson(intakePaths.record(doc.code), intakeSchema.parse(doc));
+}
+
+/** Marks an upload used, so the next publish does not pick it up again. */
+export async function markIntakeConsumed(code: string, projectToken: string): Promise<void> {
+  await putJson(
+    intakePaths.consumed(code),
+    intakeConsumedSchema.parse({ consumedAt: new Date().toISOString(), projectToken }),
+  );
+}
+
+export async function loadIntake(code: string): Promise<Intake | undefined> {
+  return readJson(intakePaths.record(code), (v) => intakeSchema.parse(v));
+}
+
+/**
+ * Uploads that have not become projects yet, newest first.
+ *
+ * "Pending" is the absence of a `.consumed.json` sibling rather than a flag on the
+ * record, so nothing is ever overwritten.
+ */
+export async function listPendingIntakes(): Promise<Intake[]> {
+  const pathnames = await listPrefix(`${INTAKE}/`);
+  const consumed = new Set(
+    pathnames
+      .map((p) => /^intake\/(.+)\.consumed\.json$/.exec(p))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => m[1]),
+  );
+
+  const codes = pathnames
+    .map((p) => /^intake\/([^/]+)\.json$/.exec(p))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => m[1])
+    .filter((code) => !code.endsWith(".consumed") && !consumed.has(code));
+
+  const records = await Promise.all(codes.map((code) => loadIntake(code)));
+  return records
+    .filter((r): r is Intake => r !== undefined)
+    .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
 }

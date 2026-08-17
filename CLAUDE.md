@@ -33,8 +33,8 @@ which survives across sessions. Nothing else is needed.
 ## The four commands
 
 ```bash
-# 1. He attached a video in this chat. Use the path it landed at.
-npm run video:new -- <path/to/attached/video> --brief "what he asked for"
+# 1. He sent a video from the send page and told you its 6-character code
+npm run video:new -- <CODE> --brief "what he asked for"
 
 # 2. He said "I left comments" — read them (also writes edits.json for you)
 npm run video:comments
@@ -52,10 +52,16 @@ every change is data.
 
 ## The loop, concretely
 
-1. **He attaches a video.** Run `video:new` with the file path. It transcodes the
-   file (phone video is usually HEVC in a `.mov` and will not play in a mobile
-   browser otherwise), measures it, uploads it, and prints the review link plus the
-   exact `sourceUrl`, `fps`, `width` and `height` to use.
+1. **He sends a video and gives you a code.** He picks it on the send page, which
+   uploads it straight to storage and shows him a 6-character code like `B27JD9`.
+   Run `video:new -- B27JD9`. It transcodes the file (phone video is usually HEVC in
+   a `.mov` and will not play in a mobile browser otherwise), measures it, uploads
+   it, and prints the review link plus the exact `sourceUrl`, `fps`, `width` and
+   `height` to use.
+
+   He uploads rather than attaching because Claude Code on a phone caps chat
+   attachments at 30 MB. If he forgets the code, `video:new` with no argument takes
+   the newest upload waiting in storage.
 2. **Write the edit.** Create `edits.json` (schema below) and run `video:update`.
    Send him the link with a sentence about what you did.
 3. **He says "I left comments".** Run `video:comments`. It prints only the rounds
