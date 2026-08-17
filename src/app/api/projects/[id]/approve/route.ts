@@ -27,14 +27,18 @@ export async function POST(
       return fail(`Already ${project.status}`, 409);
     }
 
-    await putApproval(id, {
-      approvedAt: new Date().toISOString(),
-      version: project.editsVersion,
-    });
-
+    // Dispatch first, record second. approved.json is what derives the
+    // "rendering" status, so writing it before a dispatch that then fails would
+    // strand the project in a state with no render running and no way back to
+    // in_review. This order fails cleanly and lets the client press Approve again.
     await dispatchWorkflow("render.yml", {
       projectId: id,
       version: String(project.editsVersion),
+    });
+
+    await putApproval(id, {
+      approvedAt: new Date().toISOString(),
+      version: project.editsVersion,
     });
 
     return json({ status: "rendering", version: project.editsVersion }, 201);

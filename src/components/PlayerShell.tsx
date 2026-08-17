@@ -40,7 +40,9 @@ export function PlayerShell({
       fps={edits.fps}
       compositionWidth={edits.width}
       compositionHeight={edits.height}
-      style={{ width: "100%", height: "100%" }}
+      // Width only. The Player derives its height from the composition's aspect
+      // ratio; pinning height as well fights that and mis-scales the frame.
+      style={{ width: "100%" }}
       controls
       clickToPlay
       spaceKeyToPlayOrPause

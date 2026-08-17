@@ -15,7 +15,13 @@ export function Bi({ label, className }: { label: Bilingual; className?: string 
       <span dir="rtl" className="block">
         {label.ar}
       </span>
-      <span dir="ltr" className="block text-[0.78em] font-normal leading-tight text-ink-dim">
+      {/*
+        The French line dims by lowering opacity against whatever colour it
+        inherits, never by hard-coding a grey. On the amber primary button a
+        fixed grey landed at amber-on-amber and failed contrast outright; opacity
+        keeps it legible on the canvas, on a surface and on the accent alike.
+      */}
+      <span dir="ltr" className="block text-[0.78em] font-normal leading-tight opacity-75">
         {label.fr}
       </span>
     </span>

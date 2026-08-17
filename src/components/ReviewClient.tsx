@@ -183,11 +183,24 @@ export function ReviewClient({
 
       {project.edits ? (
         <>
+          {/*
+            dir="ltr" is required, not cosmetic. The Player's own control bar is
+            laid out with flex, so under the page's RTL direction it renders
+            mirrored — "0:00 / 0:12" reads as "0:12 / 0:00" — and its internal
+            scaler mis-positions the frame. Media controls are left-to-right
+            everywhere the client already uses video, so this also matches habit.
+
+            The height cap keeps a 9:16 phone video from filling the screen and
+            pushing the comment controls out of reach.
+          */}
           <div
-            className="relative w-full overflow-hidden bg-black"
-            style={{ aspectRatio: `${project.edits.width} / ${project.edits.height}`, maxHeight: "62dvh" }}
+            dir="ltr"
+            className="flex w-full justify-center overflow-hidden bg-black"
+            style={{ maxHeight: "58dvh" }}
           >
-            <PlayerShell edits={project.edits} playerRef={playerRef} />
+            <div style={{ maxWidth: `calc(58dvh * ${project.edits.width} / ${project.edits.height})`, width: "100%" }}>
+              <PlayerShell edits={project.edits} playerRef={playerRef} />
+            </div>
           </div>
 
           <div className="border-b border-line px-3 pb-2 pt-1">
