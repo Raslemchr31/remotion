@@ -11,11 +11,30 @@ render the final so his download button goes live.
 He never sees a project id, a key, or a form. You never need to remember an id
 either: every command below acts on the current project by itself.
 
+## First run in a new session
+
+A cloud session starts from a fresh clone, so it has the code but not `.env.local`
+(gitignored, as a file holding a write token must be). Before anything else:
+
+```bash
+npm install          # ~1 min; brings in Remotion, ffmpeg and ffprobe
+npm run setup        # says exactly what is missing
+```
+
+If `setup` reports the token missing, ask the operator for it once and write it:
+
+```bash
+npm run setup -- --blob-token vercel_blob_rw_XXXXXXXX
+```
+
+It can also be set as `BLOB_READ_WRITE_TOKEN` in the cloud environment's variables,
+which survives across sessions. Nothing else is needed.
+
 ## The four commands
 
 ```bash
-# 1. He attached a video and said what he wants
-npm run video:new -- <path/to/video> --brief "what he asked for" --title "name"
+# 1. He attached a video in this chat. Use the path it landed at.
+npm run video:new -- <path/to/attached/video> --brief "what he asked for"
 
 # 2. He said "I left comments" — read them (also writes edits.json for you)
 npm run video:comments

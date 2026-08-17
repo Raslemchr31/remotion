@@ -12,7 +12,8 @@
     "video:new": "tsx scripts/publish.mts",
     "video:comments": "tsx scripts/comments.mts",
     "video:update": "tsx scripts/update.mts",
-    "video:final": "tsx scripts/finalize.mts"
+    "video:final": "tsx scripts/finalize.mts",
+    "setup": "tsx scripts/setup.mts"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.512",

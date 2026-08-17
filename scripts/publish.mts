@@ -1,35 +1,60 @@
 import { randomBytes } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { basename, extname } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 import { editsSchema } from "../src/lib/schema";
 import { createVideo, paths, putEdits, putVideoFile } from "../src/lib/store";
 import { FFMPEG, FFPROBE, flag, rememberProject, requireEnv, reviewLink, run } from "./lib.mjs";
 
 /**
- * Publishes a video the client just attached in chat.
+ * Publishes a video the client just gave you.
  *
  * Transcodes it, measures it, uploads it, creates a pass-through first version so
  * the link is never broken, prints the link and the numbers needed to write edits.
  *
- *   npm run video:new -- <video> [--title "..."] [--brief "..."]
+ *   npm run video:new -- <video file or https URL> [--title "..."] [--brief "..."]
  */
-
-const file = process.argv[2];
-if (!file || file.startsWith("--")) {
-  console.error('usage: npm run video:new -- <video> [--title "..."] [--brief "..."]');
-  process.exit(1);
-}
 
 requireEnv("BLOB_READ_WRITE_TOKEN");
 
 const token = randomBytes(32).toString("base64url");
-const filename = basename(file);
+await mkdir("work", { recursive: true });
+
+const input = process.argv[2];
+if (!input || input.startsWith("--")) {
+  console.error(
+    'usage: npm run video:new -- <video file or https URL> [--title "..."] [--brief "..."]',
+  );
+  process.exit(1);
+}
+
+/**
+ * A path or an https URL. The path is the normal case: the client attaches the video
+ * in the chat and it lands on this session's filesystem, so Claude already has it.
+ */
+let file = input;
+const filename = basename(input.startsWith("http") ? new URL(input).pathname : input) || "video.mp4";
+
+if (/^https?:\/\//.test(input)) {
+  file = `work/incoming-${filename}`;
+  console.log(`Fetching ${input}`);
+  const response = await fetch(input);
+  if (!response.ok || !response.body) {
+    console.error(`Could not fetch that URL: ${response.status} ${response.statusText}`);
+    process.exit(1);
+  }
+  await pipeline(
+    Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+    createWriteStream(file),
+  );
+}
+
 const title = flag(process.argv, "--title") ?? filename.replace(extname(filename), "");
 const brief = flag(process.argv, "--brief") ?? "";
 
-await mkdir("work", { recursive: true });
 const output = `work/${token}.mp4`;
 
 console.log(`Transcoding ${filename} (${((await stat(file)).size / 1e6).toFixed(1)} MB)`);
