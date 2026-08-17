@@ -43,3 +43,5 @@ next-env.d.ts
 # Remotion render output
 out/
 .env.local
+.vercel
+.env*

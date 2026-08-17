@@ -10,7 +10,6 @@ import { MainVideo } from "./MainVideo";
  * — so both work with no upload, no network and no Blob token.
  */
 export const SAMPLE_EDITS: Edits = {
-  version: 1,
   sourceUrl: staticFile("sample.mp4"),
   sourceDurationSec: 6,
   fps: 30,

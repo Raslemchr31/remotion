@@ -42,16 +42,26 @@ export async function dispatchWorkflow(
         Authorization: `Bearer ${token}`,
         "X-GitHub-Api-Version": "2022-11-28",
         "Content-Type": "application/json",
+        // GitHub rejects API requests without a User-Agent.
+        "User-Agent": "video-review-loop",
       },
       body: JSON.stringify({ ref, inputs }),
       cache: "no-store",
     },
   );
 
-  if (response.status !== 204) {
+  // 204 is the historical success response. GitHub added an opt-in 200 that
+  // returns run details; accept both so enabling that later is not a breaking
+  // change here.
+  if (response.status !== 204 && response.status !== 200) {
     const body = await response.text().catch(() => "");
+    const hint =
+      response.status === 404
+        ? " (a 404 here usually means the token lacks Actions:write on this repo, " +
+          `or ${workflow} has no "on: workflow_dispatch" trigger on ref "${ref}")`
+        : "";
     throw new Error(
-      `workflow_dispatch ${workflow} failed: ${response.status} ${response.statusText} ${body}`.trim(),
+      `workflow_dispatch ${workflow} failed: ${response.status} ${response.statusText} ${body}${hint}`.trim(),
     );
   }
 }

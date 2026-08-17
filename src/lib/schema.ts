@@ -160,8 +160,6 @@ export type Theme = z.infer<typeof themeSchema>;
  * and the preview both derive their timeline from them.
  */
 export const editsSchema = z.object({
-  /** Bumped by the server on every accepted edits POST. */
-  version: z.number().int().min(1).default(1),
   /** Normalized H.264 video. */
   sourceUrl: mediaSourceSchema,
   sourceDurationSec: z.number().min(0.1),
@@ -171,12 +169,14 @@ export const editsSchema = z.object({
 
   trims: z.array(trimSchema).default([]),
   captions: z.array(captionSchema).default([]),
-  captionStyle: captionStyleSchema.default({}),
+  // zod 4 wants a fully-formed output object here, not a partial, so let each
+  // nested schema fill in its own field defaults once at module load.
+  captionStyle: captionStyleSchema.default(captionStyleSchema.parse({})),
   overlays: z.array(overlaySchema).default([]),
   logo: logoSchema.optional(),
   intro: cardSchema.optional(),
   outro: cardSchema.optional(),
-  theme: themeSchema.default({}),
+  theme: themeSchema.default(themeSchema.parse({})),
   /** Mute the source audio (e.g. when a card covers a noisy opening). */
   muteSource: z.boolean().default(false),
 });
@@ -187,32 +187,82 @@ export type Edits = z.infer<typeof editsSchema>;
 /* -------------------------------------------------------------------------- */
 
 /**
- * Status machine:
+ * A project is not one mutable record. It is a set of small documents in Blob
+ * storage, each written by exactly one author:
  *
- *   normalizing -> awaiting_first_edit -> in_review <-> awaiting_edits
- *        |                                    |
- *        v                                    v
- *      error                              approved -> rendering -> done
- *                                                         |
- *                                                         v
- *                                                    render_failed
+ *   projects/{id}/record.json      created once by the upload route
+ *   projects/{id}/source.json      written once by the normalize workflow
+ *   projects/{id}/edits.json       written only by Claude
+ *   projects/{id}/rounds/{n}.json  written only by the client, append-only
+ *   projects/{id}/approved.json    written once by the approve route
+ *   projects/{id}/render.json      written once by the render workflow
  *
- * in_review and awaiting_edits alternate for as many rounds as the client wants:
- * Submit moves in_review -> awaiting_edits, and Claude posting edits moves it
- * back. Approve is the only exit.
+ * Nothing is ever read-modify-written by two authors, so Claude posting edits
+ * while the client is submitting comments cannot lose either write. Status is
+ * *derived* from which documents exist (see deriveStatus) rather than stored,
+ * which is what removes the last shared mutable field.
  */
+
 export const projectStatusSchema = z.enum([
   "normalizing",
   "awaiting_first_edit",
   "in_review",
   "awaiting_edits",
-  "approved",
   "rendering",
   "done",
   "render_failed",
   "error",
 ]);
 export type ProjectStatus = z.infer<typeof projectStatusSchema>;
+
+/** projects/{id}/record.json — immutable after the upload completes. */
+export const recordDocSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  createdAt: z.string(),
+  /** What the client typed on the upload screen. Claude's first instruction. */
+  brief: z.string().default(""),
+  /** Raw phone upload, before transcoding. */
+  originalUrl: z.string().url(),
+  originalFilename: z.string(),
+});
+export type RecordDoc = z.infer<typeof recordDocSchema>;
+
+export const probeSchema = z.object({
+  durationSec: z.number().min(0.1),
+  fps: z.number().min(1).max(120),
+  width: z.number().int().min(16),
+  height: z.number().int().min(16),
+});
+export type Probe = z.infer<typeof probeSchema>;
+
+/** projects/{id}/source.json — the normalize workflow's one and only write. */
+export const sourceDocSchema = z.object({
+  normalizedUrl: z.string().url().optional(),
+  probe: probeSchema.optional(),
+  normalizedAt: z.string().optional(),
+  /** Set instead of the above when ffmpeg could not read the upload. */
+  error: z.string().optional(),
+});
+export type SourceDoc = z.infer<typeof sourceDocSchema>;
+
+/**
+ * projects/{id}/edits.json — Claude's write.
+ *
+ * `answeredRounds` is how the client's page knows whether Claude has caught up:
+ * it is the highest round number these edits take into account. Keeping it here
+ * rather than stamping the round documents is what keeps the two writers on
+ * disjoint paths.
+ */
+export const editsDocSchema = z.object({
+  edits: editsSchema,
+  version: z.number().int().min(1),
+  answeredRounds: z.number().int().min(0).default(0),
+  /** Short message shown to the client, e.g. "raised the price overlay". */
+  note: z.string().optional(),
+  postedAt: z.string(),
+});
+export type EditsDoc = z.infer<typeof editsDocSchema>;
 
 export const commentSchema = z.object({
   id: z.string(),
@@ -222,52 +272,78 @@ export const commentSchema = z.object({
 });
 export type Comment = z.infer<typeof commentSchema>;
 
-/** One Submit press by the client. Immutable once submitted. */
+/** projects/{id}/rounds/{n}.json — one Submit press. Immutable once written. */
 export const commentRoundSchema = z.object({
   round: z.number().int().min(1),
   submittedAt: z.string(),
-  comments: z.array(commentSchema),
-  /** Set when Claude posts the edits that answer this round. */
-  appliedAt: z.string().optional(),
-  /** The edits version that answered this round. */
-  appliedInVersion: z.number().int().optional(),
-  /** Claude's short note back to the client about what it changed. */
-  responseNote: z.string().optional(),
+  /** The edits version the client was looking at when he commented. */
+  onVersion: z.number().int().min(1),
+  comments: z.array(commentSchema).min(1),
 });
 export type CommentRound = z.infer<typeof commentRoundSchema>;
 
-export const projectSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  status: projectStatusSchema,
-  /** What the client typed on the upload screen. Claude's first instruction. */
-  brief: z.string().default(""),
-  /** Raw phone upload, before transcoding. */
-  originalUrl: z.string().url().optional(),
-  originalFilename: z.string().optional(),
-  /** Browser-safe H.264 transcode. Absent until normalization finishes. */
-  normalizedUrl: z.string().url().optional(),
-  /** Probed from the normalized file by ffprobe in CI. */
-  probe: z
-    .object({
-      durationSec: z.number(),
-      fps: z.number(),
-      width: z.number().int(),
-      height: z.number().int(),
-    })
-    .optional(),
-  /** Absent until Claude posts the first edits. */
-  edits: editsSchema.optional(),
-  rounds: z.array(commentRoundSchema).default([]),
-  /** Final rendered MP4. */
-  renderUrl: z.string().url().optional(),
-  renderedVersion: z.number().int().optional(),
-  /** Populated on status "error" or "render_failed". */
-  errorMessage: z.string().optional(),
+/** projects/{id}/approved.json — written by the approve route. */
+export const approvalDocSchema = z.object({
+  approvedAt: z.string(),
+  version: z.number().int().min(1),
 });
-export type Project = z.infer<typeof projectSchema>;
+export type ApprovalDoc = z.infer<typeof approvalDocSchema>;
+
+/** projects/{id}/render.json — the render workflow's one and only write. */
+export const renderDocSchema = z.object({
+  renderUrl: z.string().url().optional(),
+  version: z.number().int().optional(),
+  renderedAt: z.string().optional(),
+  error: z.string().optional(),
+});
+export type RenderDoc = z.infer<typeof renderDocSchema>;
+
+/** Everything about a project, assembled from its documents for one response. */
+export type Project = {
+  id: string;
+  title: string;
+  brief: string;
+  createdAt: string;
+  originalUrl: string;
+  originalFilename: string;
+  status: ProjectStatus;
+  normalizedUrl?: string;
+  probe?: Probe;
+  edits?: Edits;
+  editsVersion?: number;
+  answeredRounds: number;
+  claudeNote?: string;
+  rounds: CommentRound[];
+  renderUrl?: string;
+  renderedVersion?: number;
+  /** Normalization or render failure text, whichever applies to the status. */
+  errorMessage?: string;
+};
+
+/**
+ * The single definition of "where is this project up to", computed from which
+ * documents exist. Both the review page and Claude's polling loop read this, so
+ * they can never disagree about whose turn it is.
+ */
+export function deriveStatus(parts: {
+  source?: SourceDoc;
+  editsDoc?: EditsDoc;
+  rounds: CommentRound[];
+  approval?: ApprovalDoc;
+  render?: RenderDoc;
+}): ProjectStatus {
+  if (parts.render?.renderUrl) return "done";
+  if (parts.render?.error) return "render_failed";
+  if (parts.approval) return "rendering";
+
+  if (!parts.source) return "normalizing";
+  if (parts.source.error || !parts.source.normalizedUrl) return "error";
+
+  if (!parts.editsDoc) return "awaiting_first_edit";
+
+  const latestRound = parts.rounds.reduce((max, r) => Math.max(max, r.round), 0);
+  return latestRound > parts.editsDoc.answeredRounds ? "awaiting_edits" : "in_review";
+}
 
 /* -------------------------------------------------------------------------- */
 /*  Timeline maths â€” shared by the composition, the player and the CI render   */

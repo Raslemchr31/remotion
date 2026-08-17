@@ -1,0 +1,63 @@
+name: Render final video
+
+# Dispatched when the client presses Approve. This is the only full Remotion render
+# in the whole loop — every review iteration before it is composited live in the
+# browser by @remotion/player, which is what keeps the loop fast.
+on:
+  workflow_dispatch:
+    inputs:
+      projectId:
+        description: Project id to render
+        required: true
+        type: string
+      version:
+        description: Edits version that was approved
+        required: false
+        type: string
+
+concurrency:
+  group: render-${{ inputs.projectId }}
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Remotion bundles its own ffmpeg inside the Rust compositor, so the only
+      # binary to fetch is Chrome Headless Shell. Caching it turns a ~113 MB
+      # download into a cache hit on every subsequent render.
+      - name: Cache Chrome Headless Shell
+        uses: actions/cache@v4
+        with:
+          path: node_modules/.remotion
+          key: remotion-browser-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: remotion-browser-${{ runner.os }}-
+
+      - run: npx remotion browser ensure
+
+      - name: Render and upload
+        run: node scripts/render.mjs "${{ inputs.projectId }}" "${{ inputs.version }}"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CI_API_KEY: ${{ secrets.CI_API_KEY }}
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+
+      # Kept for debugging a failed render; the client gets the file from Blob.
+      - name: Upload render log artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-debug-${{ inputs.projectId }}
+          path: work/
+          if-no-files-found: ignore
+          retention-days: 5

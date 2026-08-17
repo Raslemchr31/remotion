@@ -1,26 +1,169 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/**
+ * Cairo, self-hosted.
+ *
+ * next/font/google was the obvious choice and it does not work here: its bundled
+ * font manifest points at woff2 URLs that Google has since rotated away, so every
+ * build failed fetching a 404 — and even when it works it makes a network call a
+ * hard build dependency, which is the wrong thing to hand a CI runner.
+ *
+ * These are the current variable-weight subsets, split by unicode-range so an
+ * Arabic caption pulls 30 KB and a French one pulls 33 KB, never both.
+ */
+@font-face {
+  font-family: "Cairo";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/cairo-arabic.woff2") format("woff2");
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1,
+    U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74,
+    U+FE76-FEFC;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+@font-face {
+  font-family: "Cairo";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/cairo-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@font-face {
+  font-family: "Cairo";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/cairo-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/**
+ * Dark editing suite.
+ *
+ * The use scene decides the palette: the client judges a video on a phone, often
+ * outdoors, and a bright page throws its own light onto the frame he is trying to
+ * assess. A near-black canvas keeps the video the only lit thing on screen.
+ *
+ * Amber is load-bearing rather than decorative — it means "your mark is here":
+ * comment pins on the timeline, the pin list, and the submit action. Nothing
+ * else uses it.
+ */
+@theme {
+  --color-canvas: #0b0b0d;
+  --color-surface: #15151a;
+  --color-raised: #1e1e26;
+  --color-line: #2a2a34;
+  --color-line-strong: #3a3a48;
+
+  --color-ink: #f4f4f6;
+  /* Tinted toward the canvas hue rather than neutral gray, so dimmed text still
+     reads as part of the surface it sits on. */
+  --color-ink-dim: #a0a0b0;
+  --color-ink-faint: #6e6e80;
+
+  --color-amber: #f5a524;
+  --color-amber-soft: #2a1f08;
+  --color-mint: #3ecf8e;
+  --color-mint-soft: #0d2a1e;
+  --color-rose: #f4626b;
+  --color-rose-soft: #2b1013;
+
+  --font-sans: "Cairo", "Segoe UI", system-ui, sans-serif;
+
+  --shadow-lift: 0 2px 4px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.35);
+  --shadow-pin: 0 1px 2px rgb(0 0 0 / 0.5), 0 4px 12px rgb(245 165 36 / 0.22);
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  html {
+    background-color: var(--color-canvas);
+    /* The client zooms to read small on-screen text in the video; let him. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* Arabic sits taller than Latin; a slightly looser default keeps mixed
+       Arabic/French lines from crowding. */
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Every bilingual label holds one Arabic and one French line, so direction is
+     resolved per line from its own first strong character rather than inherited. */
+  [dir] {
+    unicode-bidi: plaintext;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-amber);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background-color: var(--color-amber);
+    color: var(--color-canvas);
+  }
+
+  /* Phone browsers give a number/text input a light default; match the suite. */
+  input,
+  textarea,
+  button {
+    font: inherit;
+    color: inherit;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  /* The one authored motion moment: a newly pinned comment settles into the
+     list, so the client sees where his note landed without hunting for it. */
+  @keyframes pin-settle {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.97);
+      filter: blur(3px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+      filter: blur(0);
+    }
+  }
+
+  .animate-pin-settle {
+    animation: pin-settle 420ms var(--ease-out-expo) both;
+  }
+
+  @keyframes sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(100%);
+    }
+  }
+
+  /* Indeterminate progress for work happening off-device (transcode, render). */
+  .animate-sweep {
+    animation: sweep 1.6s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-pin-settle,
+    .animate-sweep {
+      animation: none;
+    }
+  }
 }

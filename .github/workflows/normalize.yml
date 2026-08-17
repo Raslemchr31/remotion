@@ -1,0 +1,40 @@
+name: Normalize upload
+
+# Dispatched by the app right after a phone upload finishes. Transcodes whatever
+# the phone produced into browser-playable H.264/AAC and probes its real duration,
+# fps and dimensions — every timeline calculation downstream depends on that probe.
+on:
+  workflow_dispatch:
+    inputs:
+      projectId:
+        description: Project id to normalize
+        required: true
+        type: string
+
+# One normalize per project at a time; a re-dispatch supersedes an in-flight run.
+concurrency:
+  group: normalize-${{ inputs.projectId }}
+  cancel-in-progress: true
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # ffmpeg and ffprobe are preinstalled on ubuntu-latest, so there is nothing
+      # to apt-get here. Only the Blob SDK is needed from npm.
+      - run: npm ci --omit=dev --ignore-scripts
+
+      - name: Transcode and probe
+        run: node scripts/normalize.mjs "${{ inputs.projectId }}"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CI_API_KEY: ${{ secrets.CI_API_KEY }}
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}

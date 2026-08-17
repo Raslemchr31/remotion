@@ -1,69 +1,119 @@
-import Image from "next/image";
+import Link from "next/link";
 
-export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+import { Bi } from "@/components/Bi";
+import { ArrowBack, Film, Plus, Warning } from "@/components/icons";
+import { isValidReviewKey } from "@/lib/auth";
+import { firstValue, type SearchParams } from "@/lib/route-types";
+import { formatTime, t } from "@/lib/i18n";
+import { finalDurationSec, type Project, type ProjectStatus } from "@/lib/schema";
+import { listProjects } from "@/lib/store";
+
+/**
+ * Never prerendered. This page reads live Blob state and a secret from the query
+ * string, so a build-time snapshot would both fail (no request to take the key
+ * from) and be wrong the moment a project changed.
+ */
+export const dynamic = "force-dynamic";
+
+/** Status colour, so the list scans without reading a word of it. */
+const TONE: Record<ProjectStatus, string> = {
+  normalizing: "text-amber",
+  awaiting_first_edit: "text-amber",
+  in_review: "text-ink",
+  awaiting_edits: "text-amber",
+  rendering: "text-amber",
+  done: "text-mint",
+  render_failed: "text-rose",
+  error: "text-rose",
+};
+
+export default async function HomePage(props: SearchParams) {
+  const { key } = await props.searchParams;
+  const reviewKey = firstValue(key);
+
+  if (!isValidReviewKey(reviewKey)) {
+    return (
+      <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-6 px-6 text-center">
+        <span className="text-rose">
+          <Warning size={40} />
+        </span>
+        <Bi label={t.common.unauthorized} className="text-xl font-bold" />
+        <p className="text-sm text-ink-faint">
+          Open the link that includes your review key.
+        </p>
       </main>
+    );
+  }
+
+  const projects = await listProjects();
+  const withKey = (path: string) => `${path}?key=${encodeURIComponent(reviewKey as string)}`;
+
+  return (
+    <main className="mx-auto flex min-h-dvh max-w-lg flex-col">
+      <header className="border-b border-line px-4 py-4">
+        <h1 className="text-xl font-bold">
+          <Bi label={t.home.title} />
+        </h1>
+        <p className="mt-1 text-sm text-ink-dim">
+          <Bi label={t.home.subtitle} />
+        </p>
+      </header>
+
+      <div className="flex flex-1 flex-col gap-4 p-4">
+        <Link
+          href={withKey("/upload")}
+          className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-amber px-4 font-semibold text-canvas shadow-lift transition-colors hover:bg-amber/90"
+        >
+          <Plus />
+          <Bi label={t.home.newProject} />
+        </Link>
+
+        {projects.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-line px-6 py-12 text-center">
+            <span className="text-ink-faint">
+              <Film size={32} />
+            </span>
+            <Bi label={t.home.empty} className="text-sm text-ink-dim" />
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {projects.map((project) => (
+              <li key={project.id}>
+                <Link
+                  href={withKey(`/review/${project.id}`)}
+                  className="flex items-center gap-3 rounded-xl border border-line bg-surface p-3 transition-colors hover:border-line-strong hover:bg-raised"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p dir="auto" className="truncate font-semibold">
+                      {project.title}
+                    </p>
+                    <p className={`mt-0.5 text-xs font-semibold ${TONE[project.status]}`}>
+                      {t.status[project.status].ar}
+                      <span className="mx-1.5 text-ink-faint">·</span>
+                      <span dir="ltr" className="text-ink-dim">
+                        {t.status[project.status].fr}
+                      </span>
+                    </p>
+                  </div>
+                  <Meta project={project} />
+                  <span className="shrink-0 text-ink-faint">
+                    <ArrowBack size={18} />
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </main>
+  );
+}
+
+function Meta({ project }: { project: Project }) {
+  return (
+    <div className="shrink-0 text-right text-xs tabular-nums text-ink-faint">
+      {project.editsVersion ? <p className="font-semibold text-ink-dim">v{project.editsVersion}</p> : null}
+      {project.edits ? <p>{formatTime(finalDurationSec(project.edits))}</p> : null}
     </div>
   );
 }
