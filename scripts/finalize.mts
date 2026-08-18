@@ -1,8 +1,9 @@
 import { createReadStream } from "node:fs";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 
+import { finalDurationSec } from "../src/lib/schema";
 import { paths, putFinal, putVideoFile } from "../src/lib/store";
-import { requireEnv, resolveProject, reviewLink, run } from "./lib.mjs";
+import { FFPROBE, requireEnv, resolveProject, reviewLink, run } from "./lib.mjs";
 
 /**
  * Renders the final MP4 and makes the download live on the client's page.
@@ -65,7 +66,35 @@ await run(
 );
 
 const size = (await stat(output)).size;
-console.log(`Rendered ${(size / 1e6).toFixed(1)} MB, uploading`);
+
+/**
+ * Verify the render is the length the preview promised.
+ *
+ * `remotion render --props` merges the composition's defaultProps per key, so an
+ * edit that omits an optional key silently inherits the demo's. That once welded a
+ * placeholder intro card onto a client's video: the Player showed 11s and the file
+ * was 13s. The preview cannot catch it — it never merges — so the check belongs
+ * here, where the file exists and the expected length is known.
+ */
+const expectedSec = finalDurationSec(project.edits);
+const { stdout } = await run(FFPROBE, [
+  "-v", "error",
+  "-show_entries", "format=duration",
+  "-of", "default=noprint_wrappers=1:nokey=1",
+  output,
+]);
+const actualSec = Number(stdout.trim());
+if (!Number.isFinite(actualSec) || Math.abs(actualSec - expectedSec) > 0.3) {
+  console.error(
+    `Render length is wrong: expected ${expectedSec.toFixed(2)}s, got ${actualSec}s.\n` +
+      `Something is being merged into the props that is not in the edits — check that\n` +
+      `SAMPLE_EDITS in src/remotion/Root.tsx sets no optional key (intro, outro, logo).\n` +
+      `Not uploading; the client would have received the wrong video.`,
+  );
+  process.exit(1);
+}
+
+console.log(`Rendered ${(size / 1e6).toFixed(1)} MB, ${actualSec}s as expected. Uploading.`);
 
 const url = await putVideoFile(
   paths.finalVideo(project.token, project.version),

@@ -5,9 +5,21 @@ import { finalDurationInFrames, type Edits } from "../lib/schema";
 import { MainVideo } from "./MainVideo";
 
 /**
- * Props used by Remotion Studio and by the CI render smoke test. They point at
+ * Props for Remotion Studio and the local smoke render. They point at
  * `public/sample.mp4` — a 6-second 720x1280 clip with a burned-in second counter
  * — so both work with no upload, no network and no Blob token.
+ *
+ * CRITICAL: this must never set an optional key (`intro`, `outro`, `logo`).
+ *
+ * `remotion render --props` MERGES these defaults with the props file, per key. A
+ * real edit that omits `intro` would therefore inherit this demo's intro card and
+ * the client would receive a video with placeholder branding welded onto the front
+ * — which is exactly what happened before this comment existed. The Player takes
+ * inputProps directly with no merge, so the preview looked correct while the render
+ * did not, breaking the one invariant this project depends on.
+ *
+ * Array and scalar keys are safe: editsSchema.parse always emits them, so they are
+ * always overridden. Only the optional keys can leak.
  */
 export const SAMPLE_EDITS: Edits = {
   sourceUrl: staticFile("sample.mp4"),
@@ -44,8 +56,7 @@ export const SAMPLE_EDITS: Edits = {
       rotationDeg: 0,
     },
   ],
-  intro: { title: "علامتك التجارية", subtitle: "Votre marque", durationSec: 2 },
-  outro: { title: "اطلب الآن", subtitle: "Commandez maintenant", durationSec: 2 },
+
   theme: {
     primaryColor: "#0f172a",
     secondaryColor: "#38bdf8",
