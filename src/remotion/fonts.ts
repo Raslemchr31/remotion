@@ -1,64 +1,111 @@
-import { loadFont as loadAlmarai } from "@remotion/google-fonts/Almarai";
-import { loadFont as loadCairo } from "@remotion/google-fonts/Cairo";
-import { loadFont as loadNotoSansArabic } from "@remotion/google-fonts/NotoSansArabic";
-import { loadFont as loadTajawal } from "@remotion/google-fonts/Tajawal";
+import { continueRender, delayRender, staticFile } from "remotion";
 
 import type { Theme } from "../lib/schema";
 
 /**
- * All four families cover Arabic and Latin, so one caption can mix Arabic text
- * with a Latin brand name or a Western price without falling back to a system
- * font mid-word.
+ * Arabic + Latin fonts, self-hosted from public/fonts.
  *
- * Two non-obvious constraints drive the shape of this file:
+ * These were previously pulled from Google via @remotion/google-fonts, and that
+ * fails in a Claude Code cloud sandbox: the sandbox routes traffic through an
+ * inspecting proxy, and Remotion's bundled headless Chrome has its own NSS trust
+ * store which does not trust that proxy's certificate. The fetch fails TLS, the
+ * font never arrives, and every caption renders as empty boxes — while the same
+ * render works fine on a laptop. Exactly the "works on my machine" failure this
+ * project exists to avoid.
  *
- * 1. `weights` and `subsets` must be narrowed explicitly. A bare loadFont()
- *    fetches every weight x every subset — 24 separate FontFace requests for
- *    Cairo alone, each holding its own delayRender handle, which is the usual
- *    cause of "delayRender was called but not cleared" render timeouts.
+ * Loading from disk removes the network from the render path entirely, so it
+ * behaves the same on a laptop, in a sandbox behind a proxy, and offline. It is
+ * also faster, and it cannot time out.
  *
- * 2. "latin" is not optional. Each subset becomes a FontFace with a
- *    unicode-range, and the arabic range excludes ASCII — so "1900 DA" in an
- *    otherwise-Arabic caption would silently fall back without it.
- *
- * Loading happens at module scope: @remotion/google-fonts guards `typeof
- * FontFace`, so this no-ops during SSR and is safe to import from both the
- * Remotion bundle and the Next.js app.
+ * Each family is registered per weight and per unicode-range, so an Arabic caption
+ * pulls only the Arabic file and a French one only the Latin file. The ranges match
+ * what Google serves, which is what keeps "1 900 DA" in an Arabic caption from
+ * falling back to a system font.
  */
 
-const WEIGHTS = ["400", "700"] as const;
-const SUBSETS = ["arabic", "latin"] as const;
+const ARABIC_RANGE =
+  "U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-08FF, " +
+  "U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC";
 
-const cairo = loadCairo("normal", { weights: [...WEIGHTS], subsets: [...SUBSETS] });
-const almarai = loadAlmarai("normal", { weights: [...WEIGHTS], subsets: [...SUBSETS] });
-const tajawal = loadTajawal("normal", { weights: [...WEIGHTS], subsets: [...SUBSETS] });
-const noto = loadNotoSansArabic("normal", { weights: [...WEIGHTS], subsets: [...SUBSETS] });
+const LATIN_RANGE =
+  "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, " +
+  "U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, " +
+  "U+FEFF, U+FFFD";
 
-const FAMILIES: Record<Theme["fontFamily"], string> = {
-  Cairo: cairo.fontFamily,
-  Almarai: almarai.fontFamily,
-  Tajawal: tajawal.fontFamily,
-  NotoSansArabic: noto.fontFamily,
+type FaceSpec = { file: string; weight: string; range: string };
+
+const FACES: Record<Theme["fontFamily"], FaceSpec[]> = {
+  // Cairo and Noto Sans Arabic are variable fonts: one file covers 400 to 700.
+  Cairo: [
+    { file: "cairo-arabic.woff2", weight: "400 700", range: ARABIC_RANGE },
+    { file: "cairo-latin.woff2", weight: "400 700", range: LATIN_RANGE },
+  ],
+  NotoSansArabic: [
+    { file: "noto-arabic.woff2", weight: "400 700", range: ARABIC_RANGE },
+    { file: "noto-latin.woff2", weight: "400 700", range: LATIN_RANGE },
+  ],
+  // Almarai and Tajawal ship static weights, so each needs its own file.
+  Almarai: [
+    { file: "almarai-400-arabic.woff2", weight: "400", range: ARABIC_RANGE },
+    { file: "almarai-400-latin.woff2", weight: "400", range: LATIN_RANGE },
+    { file: "almarai-700-arabic.woff2", weight: "700", range: ARABIC_RANGE },
+    { file: "almarai-700-latin.woff2", weight: "700", range: LATIN_RANGE },
+  ],
+  Tajawal: [
+    { file: "tajawal-400-arabic.woff2", weight: "400", range: ARABIC_RANGE },
+    { file: "tajawal-400-latin.woff2", weight: "400", range: LATIN_RANGE },
+    { file: "tajawal-700-arabic.woff2", weight: "700", range: ARABIC_RANGE },
+    { file: "tajawal-700-latin.woff2", weight: "700", range: LATIN_RANGE },
+  ],
 };
+
+const FAMILY_NAMES: Record<Theme["fontFamily"], string> = {
+  Cairo: "Cairo",
+  Almarai: "Almarai",
+  Tajawal: "Tajawal",
+  NotoSansArabic: "Noto Sans Arabic",
+};
+
+/**
+ * Registers every face once, at module scope.
+ *
+ * The `typeof FontFace` guard matters: this module is imported by the review page,
+ * which Next renders on the server where FontFace does not exist. Without it, the
+ * page would throw during SSR.
+ */
+const loadAll = (): Promise<void> => {
+  if (typeof FontFace === "undefined") return Promise.resolve();
+
+  const loads = (Object.keys(FACES) as Theme["fontFamily"][]).flatMap((family) =>
+    FACES[family].map(async (face) => {
+      const fontFace = new FontFace(
+        FAMILY_NAMES[family],
+        `url(${staticFile(`fonts/${face.file}`)}) format('woff2')`,
+        { weight: face.weight, unicodeRange: face.range, display: "block" },
+      );
+      await fontFace.load();
+      document.fonts.add(fontFace);
+    }),
+  );
+
+  return Promise.all(loads).then(() => undefined);
+};
+
+const fontsReady = loadAll();
+
+// Holds the render open until the faces are registered. In the Player this is a
+// no-op, which is why <WaitForFonts> gates on React state as well.
+if (typeof FontFace !== "undefined") {
+  const handle = delayRender("Loading Arabic fonts");
+  fontsReady
+    .then(() => continueRender(handle))
+    .catch(() => continueRender(handle));
+}
+
+/** Resolves once every family is usable. */
+export const waitForFonts = (): Promise<void> => fontsReady;
 
 /** CSS font-family stack for a theme, with a system fallback. */
 export function fontStack(theme: Theme): string {
-  return `${FAMILIES[theme.fontFamily]}, "Segoe UI", system-ui, sans-serif`;
+  return `"${FAMILY_NAMES[theme.fontFamily]}", "Segoe UI", system-ui, sans-serif`;
 }
-
-/**
- * Resolves once every family is available.
- *
- * Needed because delayRender() is a no-op in the Player: the render waits for
- * fonts automatically, but the preview would paint a fallback font and then
- * visibly reflow every caption when the woff2 lands. <WaitForFonts> gates on
- * this so the client's phone and the final MP4 show the same thing.
- */
-export const waitForFonts = async (): Promise<void> => {
-  await Promise.all([
-    cairo.waitUntilDone(),
-    almarai.waitUntilDone(),
-    tajawal.waitUntilDone(),
-    noto.waitUntilDone(),
-  ]);
-};

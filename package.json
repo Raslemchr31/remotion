@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@remotion/cli": "^4.0.512",
-    "@remotion/google-fonts": "^4.0.512",
     "@remotion/player": "^4.0.512",
     "@remotion/zod-types": "^4.0.512",
     "@vercel/blob": "^2.8.0",
