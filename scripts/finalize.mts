@@ -24,8 +24,15 @@ if (!project.edits || !project.version) {
   process.exit(1);
 }
 
-if (project.finalUrl && project.finalVersion === project.version) {
-  console.log(`v${project.version} is already rendered:\n  ${project.finalUrl}`);
+// --force re-renders a version that already has a final. Needed when a render
+// produced the wrong file: without it, the bad output blocks its own replacement.
+const force = process.argv.includes("--force");
+
+if (!force && project.finalUrl && project.finalVersion === project.version) {
+  console.log(
+    `v${project.version} is already rendered:\n  ${project.finalUrl}\n\n` +
+      `Pass --force to render it again.`,
+  );
   process.exit(0);
 }
 

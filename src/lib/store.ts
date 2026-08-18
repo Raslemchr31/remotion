@@ -36,7 +36,12 @@ export const paths = {
   edits: (token: string, version: number) => `${PREFIX}/${token}/edits/${version}.json`,
   round: (token: string, round: number) => `${PREFIX}/${token}/rounds/${round}.json`,
   done: (token: string) => `${PREFIX}/${token}/done.json`,
-  final: (token: string) => `${PREFIX}/${token}/final.json`,
+  /**
+   * Versioned, because every document here is write-once. A single final.json
+   * could only ever be written once, so re-rendering after a bad render — or
+   * rendering a newer version — would throw instead of recording the result.
+   */
+  final: (token: string, version: number) => `${PREFIX}/${token}/final/${version}.json`,
   sourceVideo: (token: string) => `${PREFIX}/${token}/source.mp4`,
   finalVideo: (token: string, version: number) => `${PREFIX}/${token}/final-v${version}.mp4`,
 };
@@ -91,7 +96,8 @@ export async function putDone(token: string, doc: DoneDoc): Promise<void> {
 }
 
 export async function putFinal(token: string, doc: FinalDoc): Promise<void> {
-  await putJson(paths.final(token), finalDocSchema.parse(doc));
+  const parsed = finalDocSchema.parse(doc);
+  await putJson(paths.final(token, parsed.version), parsed);
 }
 
 /** Uploads a video file. Re-running a render should replace its own output. */
@@ -129,6 +135,7 @@ export async function loadProject(token: string): Promise<Project | undefined> {
 
   const latestVersion = numbersUnder(pathnames, /\/edits\/(\d+)\.json$/).at(-1);
   const roundNumbers = numbersUnder(pathnames, /\/rounds\/(\d+)\.json$/);
+  const latestFinal = numbersUnder(pathnames, /\/final\/(\d+)\.json$/).at(-1);
 
   const [video, editsDoc, done, final, rounds] = await Promise.all([
     readJson(paths.video(token), (v) => videoDocSchema.parse(v)),
@@ -138,8 +145,8 @@ export async function loadProject(token: string): Promise<Project | undefined> {
     pathnames.includes(paths.done(token))
       ? readJson(paths.done(token), (v) => doneDocSchema.parse(v))
       : undefined,
-    pathnames.includes(paths.final(token))
-      ? readJson(paths.final(token), (v) => finalDocSchema.parse(v))
+    latestFinal
+      ? readJson(paths.final(token, latestFinal), (v) => finalDocSchema.parse(v))
       : undefined,
     Promise.all(roundNumbers.map((n) => readJson(paths.round(token, n), (v) => roundSchema.parse(v)))),
   ]);
