@@ -44,6 +44,9 @@ npm run video:update -- edits.json --note "one line saying what you changed"
 
 # 4. He said he is done — render the final; his download button goes live
 npm run video:final
+# to re-render a version that already has a final (a bad render), note the
+# second --, which stops npm swallowing the flag:
+npm run video:final -- --force
 ```
 
 Nothing else is required. There is no server to start, no id to track, no
