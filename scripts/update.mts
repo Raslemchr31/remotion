@@ -37,22 +37,38 @@ const edits = parsed.data;
  * disagrees with the render — so this fails loudly instead.
  */
 const mismatches: string[] = [];
-if (edits.sourceUrl !== video.sourceUrl) {
-  mismatches.push(`sourceUrl must be exactly:\n    ${video.sourceUrl}`);
-}
 if (edits.fps !== video.fps) mismatches.push(`fps must be ${video.fps}`);
 if (edits.width !== video.width) mismatches.push(`width must be ${video.width}`);
 if (edits.height !== video.height) mismatches.push(`height must be ${video.height}`);
-if (Math.abs(edits.sourceDurationSec - video.durationSec) > 0.05) {
-  mismatches.push(`sourceDurationSec must be ${video.durationSec}`);
+
+if (edits.clips.length !== video.sources.length) {
+  mismatches.push(`clips must list all ${video.sources.length} uploaded clip(s), in upload order`);
+} else {
+  edits.clips.forEach((clip, index) => {
+    const source = video.sources[index];
+    if (clip.sourceUrl !== source.url) {
+      mismatches.push(`clips[${index}].sourceUrl must be exactly:\n    ${source.url}`);
+    }
+    if (Math.abs(clip.durationSec - source.durationSec) > 0.05) {
+      mismatches.push(`clips[${index}].durationSec must be ${source.durationSec}`);
+    }
+  });
 }
-for (const trim of edits.trims) {
-  if (trim.fromSec >= video.durationSec) {
+
+// A segment pointing outside a clip renders as nothing: invisible in the props,
+// obvious as a gap in the video. Refuse it here rather than ship the gap.
+edits.segments.forEach((segment, index) => {
+  const source = video.sources[segment.clip];
+  if (!source) {
+    mismatches.push(`segments[${index}].clip is ${segment.clip}, but there is no such clip`);
+    return;
+  }
+  if (segment.fromSec >= source.durationSec) {
     mismatches.push(
-      `a trim starts at ${trim.fromSec}s, at or past the end of the source (${video.durationSec}s)`,
+      `segments[${index}] starts at ${segment.fromSec}s, at or past the end of clip ${segment.clip} (${source.durationSec}s)`,
     );
   }
-}
+});
 
 if (mismatches.length > 0) {
   console.error("These must match the published video:\n");

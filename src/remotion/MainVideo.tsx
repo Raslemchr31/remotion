@@ -1,7 +1,7 @@
 import React from "react";
 import { AbsoluteFill, Sequence, useVideoConfig } from "remotion";
 
-import { finalDurationInFrames, secToFrames, trimmedDurationSec, type Edits } from "../lib/schema";
+import { bodyDurationSec, finalDurationInFrames, secToFrames, type Edits } from "../lib/schema";
 import { Captions } from "./parts/Captions";
 import { Card } from "./parts/Card";
 import { LogoLayer } from "./parts/LogoLayer";
@@ -29,20 +29,14 @@ export const MainVideo: React.FC<Edits> = (edits) => {
   const { fps } = useVideoConfig();
 
   const introFrames = edits.intro ? secToFrames(edits.intro.durationSec, fps) : 0;
-  const bodyFrames = Math.max(1, secToFrames(trimmedDurationSec(edits), fps));
+  const bodyFrames = Math.max(1, secToFrames(bodyDurationSec(edits), fps));
   const outroFrames = edits.outro ? secToFrames(edits.outro.durationSec, fps) : 0;
   const totalFrames = finalDurationInFrames(edits);
 
   return (
     <AbsoluteFill style={{ backgroundColor: edits.theme.primaryColor }}>
       <Sequence from={introFrames} durationInFrames={bodyFrames} layout="none" name="Body">
-        <VideoTrack
-          sourceUrl={edits.sourceUrl}
-          sourceDurationSec={edits.sourceDurationSec}
-          trims={edits.trims}
-          fps={fps}
-          muted={edits.muteSource}
-        />
+        <VideoTrack edits={edits} fps={fps} />
       </Sequence>
 
       {/*

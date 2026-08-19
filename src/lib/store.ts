@@ -42,7 +42,7 @@ export const paths = {
    * rendering a newer version — would throw instead of recording the result.
    */
   final: (token: string, version: number) => `${PREFIX}/${token}/final/${version}.json`,
-  sourceVideo: (token: string) => `${PREFIX}/${token}/source.mp4`,
+  sourceVideo: (token: string, index: number) => `${PREFIX}/${token}/source-${index}.mp4`,
   finalVideo: (token: string, version: number) => `${PREFIX}/${token}/final-v${version}.mp4`,
 };
 

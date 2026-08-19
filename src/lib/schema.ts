@@ -45,18 +45,37 @@ export const mediaSourceSchema = z
   });
 
 /**
- * A keep-range of the source video, in source-video seconds. Trims are applied
- * in array order and concatenated, so reordering the array reorders the video.
+ * One uploaded clip, after it has been transcoded onto the shared canvas.
+ *
+ * Every clip in a project has the same dimensions and frame rate — publish pads
+ * them onto the first clip's canvas — so the composition never has to reconcile a
+ * portrait clip with a landscape one at render time.
  */
-export const trimSchema = z
+export const clipSchema = z.object({
+  sourceUrl: mediaSourceSchema,
+  durationSec: z.number().min(0.05),
+  /** Original filename, so Claude can talk about "the second clip" by name. */
+  label: z.string().default(""),
+});
+export type Clip = z.infer<typeof clipSchema>;
+
+/**
+ * A kept range of one clip. Segments are concatenated in array order, so the array
+ * is both the cut list and the running order: reordering it reorders the video, and
+ * the same clip may appear more than once.
+ *
+ * `fromSec`/`toSec` are seconds within that clip, not on the final timeline.
+ */
+export const segmentSchema = z
   .object({
+    clip: z.number().int().min(0),
     fromSec: z.number().min(0),
     toSec: z.number().min(0),
   })
-  .refine((t) => t.toSec > t.fromSec, {
+  .refine((s) => s.toSec > s.fromSec, {
     message: "toSec must be greater than fromSec",
   });
-export type Trim = z.infer<typeof trimSchema>;
+export type Segment = z.infer<typeof segmentSchema>;
 
 /**
  * Burned-in subtitle. Times are on the FINAL timeline (after trims, after the
@@ -155,19 +174,23 @@ export type Theme = z.infer<typeof themeSchema>;
 /**
  * The full prop payload for the MainVideo composition.
  *
- * `sourceDurationSec`, `fps`, `width` and `height` are measured once by the
- * normalization workflow (ffprobe) and must not be invented by hand: the render
- * and the preview both derive their timeline from them.
+ * `fps`, `width` and `height` describe the shared canvas and are measured by ffprobe
+ * at publish time. They must not be invented by hand: the preview and the render
+ * both derive their timeline from them, and a mismatch shows up as captions drifting
+ * off the moments the client pinned them to.
  */
-export const editsSchema = z.object({
-  /** Normalized H.264 video. */
-  sourceUrl: mediaSourceSchema,
-  sourceDurationSec: z.number().min(0.1),
+export const editsBodySchema = z.object({
+  /** Every uploaded clip, in upload order. Index 0 is the first one he sent. */
+  clips: z.array(clipSchema).min(1),
   fps: z.number().min(1).max(120),
   width: z.number().int().min(16),
   height: z.number().int().min(16),
 
-  trims: z.array(trimSchema).default([]),
+  /**
+   * The cut list. Empty means "play every clip in full, in order", which is what a
+   * freshly published project starts as.
+   */
+  segments: z.array(segmentSchema).default([]),
   captions: z.array(captionSchema).default([]),
   // zod 4 wants a fully-formed output object here, not a partial, so let each
   // nested schema fill in its own field defaults once at module load.
@@ -180,7 +203,32 @@ export const editsSchema = z.object({
   /** Mute the source audio (e.g. when a card covers a noisy opening). */
   muteSource: z.boolean().default(false),
 });
-export type Edits = z.infer<typeof editsSchema>;
+
+/**
+ * Accepts the single-clip shape this project started with and upgrades it.
+ *
+ * Edits already written to storage use `sourceUrl` + `sourceDurationSec` + `trims`.
+ * Rewriting those documents is not an option — they are write-once by design — so
+ * the old shape is translated on read instead. Everything downstream then deals
+ * with exactly one shape, with no legacy branches in the composition or the scripts.
+ */
+export const editsSchema = z.preprocess((raw) => {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const value = raw as Record<string, unknown>;
+  if (value.clips !== undefined || value.sourceUrl === undefined) return value;
+
+  const { sourceUrl, sourceDurationSec, trims, ...rest } = value;
+  const duration = typeof sourceDurationSec === "number" ? sourceDurationSec : 0;
+  const ranges = Array.isArray(trims) ? (trims as { fromSec: number; toSec: number }[]) : [];
+
+  return {
+    ...rest,
+    clips: [{ sourceUrl, durationSec: duration, label: "" }],
+    segments: ranges.map((t) => ({ clip: 0, fromSec: t.fromSec, toSec: t.toSec })),
+  };
+}, editsBodySchema);
+
+export type Edits = z.infer<typeof editsBodySchema>;
 
 
 /* -------------------------------------------------------------------------- */
@@ -207,22 +255,46 @@ export type Edits = z.infer<typeof editsSchema>;
  * taps a link his phone already has.
  */
 
-/** projects/{token}/video.json — written once, when the project is published. */
-export const videoDocSchema = z.object({
+/**
+ * projects/{token}/video.json — written once, when the project is published.
+ *
+ * Accepts the single-source shape written before multi-clip support, for the same
+ * reason editsSchema does: these documents are write-once and cannot be rewritten.
+ */
+export const videoDocSchema = z.preprocess((raw) => {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const value = raw as Record<string, unknown>;
+  if (value.sources !== undefined || value.sourceUrl === undefined) return value;
+
+  const { sourceUrl, originalFilename, durationSec, ...rest } = value;
+  return {
+    ...rest,
+    sources: [{ url: sourceUrl, filename: originalFilename ?? "", durationSec: durationSec ?? 0 }],
+  };
+}, z.object({
   token: z.string().min(20),
   title: z.string(),
   /** What the client asked for in chat. Kept so Claude can re-read it later. */
   brief: z.string().default(""),
   createdAt: z.string(),
-  /** Browser-playable H.264/AAC transcode of whatever the phone produced. */
-  sourceUrl: z.string().url(),
-  originalFilename: z.string(),
-  /** Measured by ffprobe. Every timeline calculation derives from these. */
-  durationSec: z.number().min(0.1),
+  /**
+   * Every clip he sent, in upload order, already transcoded onto the shared canvas.
+   * One project can be built from several clips.
+   */
+  sources: z
+    .array(
+      z.object({
+        url: z.string().url(),
+        filename: z.string(),
+        durationSec: z.number().min(0.05),
+      }),
+    )
+    .min(1),
+  /** The shared canvas, measured by ffprobe. Every clip matches it exactly. */
   fps: z.number().min(1).max(120),
   width: z.number().int().min(16),
   height: z.number().int().min(16),
-});
+}));
 export type VideoDoc = z.infer<typeof videoDocSchema>;
 
 /** projects/{token}/edits/{n}.json — Claude's write. */
@@ -338,20 +410,59 @@ export function unansweredRounds(project: Project): Round[] {
 
 export const secToFrames = (sec: number, fps: number) => Math.round(sec * fps);
 
-/** Seconds of source kept after trims. No trims means the whole video. */
-export function trimmedDurationSec(edits: Pick<Edits, "trims" | "sourceDurationSec">): number {
-  if (edits.trims.length === 0) return edits.sourceDurationSec;
-  return edits.trims.reduce(
-    (total, t) => total + (Math.min(t.toSec, edits.sourceDurationSec) - t.fromSec),
-    0,
-  );
+/**
+ * The cut list, with the empty case resolved.
+ *
+ * No segments means "every clip in full, in order", so callers never have to
+ * special-case a freshly published project.
+ */
+export function resolveSegments(edits: Pick<Edits, "clips" | "segments">): Segment[] {
+  if (edits.segments.length > 0) return edits.segments;
+  return edits.clips.map((clip, index) => ({ clip: index, fromSec: 0, toSec: clip.durationSec }));
 }
 
-/** Length of the finished video: intro card + trimmed body + outro card. */
+/** Seconds of footage kept, across every clip. */
+export function bodyDurationSec(edits: Pick<Edits, "clips" | "segments">): number {
+  return resolveSegments(edits).reduce((total, segment) => {
+    const clip = edits.clips[segment.clip];
+    if (!clip) return total;
+    return total + (Math.min(segment.toSec, clip.durationSec) - segment.fromSec);
+  }, 0);
+}
+
+/** Length of the finished video: intro card + kept footage + outro card. */
 export function finalDurationSec(edits: Edits): number {
-  return (
-    (edits.intro?.durationSec ?? 0) + trimmedDurationSec(edits) + (edits.outro?.durationSec ?? 0)
-  );
+  return (edits.intro?.durationSec ?? 0) + bodyDurationSec(edits) + (edits.outro?.durationSec ?? 0);
+}
+
+/**
+ * Translates a moment on the final timeline back to a clip and a time inside it.
+ *
+ * This is what makes a client's comment actionable: he taps at 6.2s on the finished
+ * video, and to act on it Claude needs to know that is 1.4s into the second clip.
+ * Returns undefined when the moment lands on the intro or outro card.
+ */
+export function locateFinalSecond(
+  edits: Edits,
+  finalSec: number,
+): { clip: number; clipSec: number; label: string } | undefined {
+  let cursor = edits.intro?.durationSec ?? 0;
+  if (finalSec < cursor) return undefined;
+
+  for (const segment of resolveSegments(edits)) {
+    const clip = edits.clips[segment.clip];
+    if (!clip) continue;
+    const length = Math.min(segment.toSec, clip.durationSec) - segment.fromSec;
+    if (finalSec < cursor + length) {
+      return {
+        clip: segment.clip,
+        clipSec: segment.fromSec + (finalSec - cursor),
+        label: clip.label,
+      };
+    }
+    cursor += length;
+  }
+  return undefined;
 }
 
 export function finalDurationInFrames(edits: Edits): number {
@@ -394,9 +505,19 @@ export const INTAKE_CODE_ALPHABET = "23456789BCDFGHJKMNPQRSTVWXYZ";
 export const intakeSchema = z.object({
   code: z.string().min(4).max(12),
   uploadedAt: z.string(),
-  url: z.string().url(),
-  filename: z.string(),
-  sizeBytes: z.number().int().min(1),
+  /**
+   * Everything he picked in one go, in the order he picked it. One code covers the
+   * whole batch, so he reads out a single code no matter how many clips he sent.
+   */
+  files: z
+    .array(
+      z.object({
+        url: z.string().url(),
+        filename: z.string(),
+        sizeBytes: z.number().int().min(1),
+      }),
+    )
+    .min(1),
 });
 export type Intake = z.infer<typeof intakeSchema>;
 

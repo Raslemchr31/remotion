@@ -79,21 +79,46 @@ export function recallProject(): string | undefined {
 }
 
 /**
- * Reads a named flag, e.g. flag(process.argv, "--brief").
+ * Splits argv into positional arguments and named flags, in one pass.
  *
- * Joins every argument up to the next flag rather than taking just the one after
- * it: `npm run` re-splits quoted values, so `--brief "add captions"` arrives as two
- * separate arguments and taking only the first would silently truncate the client's
- * instructions to one word.
+ * A flag takes every following token up to the next flag, because `npm run`
+ * re-splits quoted values: `--brief "add captions"` arrives as two separate
+ * arguments, and taking only the first would silently truncate the client's
+ * instructions to one word. Consuming them in order is also what keeps a flag's
+ * words out of the positional list — picking them out afterwards by value loses
+ * the file order and mistakes a word for a filename.
  */
-export function flag(argv: string[], name: string): string | undefined {
-  const start = argv.indexOf(name);
-  if (start === -1) return undefined;
-  const words: string[] = [];
-  for (let i = start + 1; i < argv.length && !argv[i].startsWith("--"); i += 1) {
-    words.push(argv[i]);
+export function parseArgs(argv: string[]): {
+  positional: string[];
+  flags: Record<string, string | true>;
+} {
+  const positional: string[] = [];
+  const flags: Record<string, string | true> = {};
+
+  let i = 2; // skip node and the script path
+  while (i < argv.length) {
+    const token = argv[i];
+    if (!token.startsWith("--")) {
+      positional.push(token);
+      i += 1;
+      continue;
+    }
+    const words: string[] = [];
+    i += 1;
+    while (i < argv.length && !argv[i].startsWith("--")) {
+      words.push(argv[i]);
+      i += 1;
+    }
+    flags[token] = words.length > 0 ? words.join(" ") : true;
   }
-  return words.length > 0 ? words.join(" ") : undefined;
+
+  return { positional, flags };
+}
+
+/** Reads a named string flag, e.g. flag(process.argv, "--brief"). */
+export function flag(argv: string[], name: string): string | undefined {
+  const value = parseArgs(argv).flags[name];
+  return typeof value === "string" ? value : undefined;
 }
 
 export function reviewLink(token: string): string {

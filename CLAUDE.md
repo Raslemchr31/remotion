@@ -33,7 +33,7 @@ which survives across sessions. Nothing else is needed.
 ## The four commands
 
 ```bash
-# 1. He sent a video from the send page and told you its 6-character code
+# 1. He sent one or more clips from the send page and told you the 6-character code
 npm run video:new -- <CODE> --brief "what he asked for"
 
 # 2. He said "I left comments" — read them (also writes edits.json for you)
@@ -53,28 +53,68 @@ Nothing else is required. There is no server to start, no id to track, no
 GitHub Action, and no deploy step for an edit — the composition is fixed code and
 every change is data.
 
+## Ask before you edit
+
+After you have watched the footage and before you write any edits, **ask him 3–5
+questions** using your question tool, so he taps answers instead of typing. Then edit.
+
+This exists to end the guessing round. Without it the first cut is a guess, he
+comments, you guess again — three rounds to reach something he could have told you in
+thirty seconds. One round of questions replaces most of that.
+
+The questions must come from **this footage and this brief**, never from a template.
+You have just watched the clips: ask about what you actually saw and could not decide
+from looking. Good questions sound like:
+
+- "Clip 2 has ten seconds of you walking to the shelf — cut it, or keep it as the
+  opening?"
+- "You say a price out loud around 0:06. What is it, so I can put it on screen?"
+- "Two clips, 18s together. For Reels I would cut to about 12s. Keep it full or tighten?"
+- "The pink bag is the best-looking thing here. Open on it, or keep your greeting first?"
+- "The shop is noisy. Keep your voice, or mute it and let the captions carry it?"
+
+Never ask what you can see for yourself ("is this portrait?"), what he already told
+you in the brief, or anything you would ask about any video ("what is your brand
+colour?" — take it from what is on screen and confirm only if it matters).
+
+Two rules that matter:
+
+- **You cannot hear speech.** There is no transcription. If the video depends on
+  what he is saying, one of your questions must be asking him what he says — do not
+  invent dialogue.
+- **Offer a recommendation.** He is not an editor. Say which option you would pick
+  and why, and let him tap it. "I would cut it — the first second decides whether
+  anyone watches" is worth more than a neutral menu.
+
+Put the answers he gives into the `--note` of the version you post, in his language.
+`video:comments` prints that note back on every later round, so a fresh session
+inherits the decisions instead of asking him the same thing twice.
+
 ## The loop, concretely
 
-1. **He sends a video and gives you a code.** He picks it on the send page, which
-   uploads it straight to storage and shows him a 6-character code like `B27JD9`.
-   Run `video:new -- B27JD9`. It transcodes the file (phone video is usually HEVC in
-   a `.mov` and will not play in a mobile browser otherwise), measures it, uploads
-   it, and prints the review link plus the exact `sourceUrl`, `fps`, `width` and
-   `height` to use.
+1. **He sends clips and gives you a code.** He picks one or more on the send page,
+   which uploads them straight to storage and shows him a single 6-character code
+   like `B27JD9`. Run `video:new -- B27JD9`. It transcodes every clip onto one
+   shared canvas (phone video is usually HEVC in a `.mov` and will not play in a
+   mobile browser otherwise), measures them, uploads them, and prints the review link
+   plus the exact values to use.
 
    He uploads rather than attaching because Claude Code on a phone caps chat
    attachments at 30 MB. If he forgets the code, `video:new` with no argument takes
    the newest upload waiting in storage.
-2. **Write the edit.** Create `edits.json` (schema below) and run `video:update`.
+
+2. **Watch the footage, then ask your questions.** See the section above. Do not skip
+   to editing.
+3. **Write the edit.** Create `edits.json` (schema below) and run `video:update`.
    Send him the link with a sentence about what you did.
-3. **He says "I left comments".** Run `video:comments`. It prints only the rounds
+4. **He says "I left comments".** Run `video:comments`. It prints only the rounds
    you have not answered, each comment's timestamp on both the final and the source
    timeline, and writes the current edits to `edits.json` so you can modify rather
    than retype.
-4. **Apply and post.** Change `edits.json`, run `video:update` with a `--note`.
+5. **Apply and post.** Change `edits.json`, run `video:update` with a `--note`.
    Tell him it is ready; he does not need to reload.
-5. **Repeat** from 3 for as many rounds as he wants.
-6. **He says he is done.** Run `video:final`. A few minutes later his page has a
+6. **Repeat** from 4 for as many rounds as he wants.
+7. **He says he is done.** Run `video:final`. A few minutes later his page has a
    download button.
 
 ## Rules that will bite you
@@ -83,14 +123,15 @@ every change is data.
 current edits to `edits.json` for exactly this reason — modify that file. Anything
 you delete from it is gone from the video.
 
-**Never invent `sourceUrl`, `fps`, `width`, `height` or `sourceDurationSec`.** They
-come from ffprobe at publish time and `video:update` refuses values that disagree,
-because the preview and the render both derive their timeline from them.
+**Never invent `clips`, `fps`, `width` or `height`.** They come from ffprobe at
+publish time and `video:update` refuses values that disagree, because the preview and
+the render both derive their timeline from them. `clips` must list every uploaded
+clip, in upload order, even ones you cut out entirely — drop those with `segments`.
 
-**Times are on the FINAL timeline, not the source.** The final timeline is
-`intro.durationSec` + the kept source + `outro.durationSec`. A comment at 4.5s with
-a 2-second intro is source second 2.5. `trims` are the one field in source seconds —
-`video:comments` prints both figures so you do not have to do the arithmetic.
+**Times are on the FINAL timeline, except segments.** Captions, overlays and the logo
+are placed on the finished video's timeline. `segments` are cut in each clip's own
+seconds. `video:comments` prints the running order and locates every comment to its
+clip and second, so you never do that arithmetic by hand.
 
 **Answer the comment he actually made.** "كبّر السعر" means raise `fontSizePx` on
 that overlay, not restyle the video. Make the smallest change that satisfies the
@@ -106,12 +147,21 @@ validates your file and what the composition consumes.
 
 ```jsonc
 {
-  "sourceUrl": "<printed by video:new>",
-  "sourceDurationSec": 8.011, "fps": 30, "width": 1280, "height": 720,
+  // Every uploaded clip, in upload order, exactly as video:new printed them.
+  "clips": [
+    { "sourceUrl": "<printed by video:new>", "durationSec": 8.011, "label": "IMG_1.mov" },
+    { "sourceUrl": "<printed by video:new>", "durationSec": 5.4,   "label": "IMG_2.mov" }
+  ],
+  "fps": 30, "width": 1080, "height": 1920,   // the shared canvas
 
-  "trims": [{ "fromSec": 0, "toSec": 5 }],   // SOURCE seconds; kept ranges,
-                                              // concatenated in array order.
-                                              // [] keeps the whole video.
+  // The cut list AND the running order. Each entry is a kept range of one clip, in
+  // that clip's own seconds. [] plays every clip in full, in order. A clip may
+  // appear more than once, and reordering this reorders the video.
+  "segments": [
+    { "clip": 0, "fromSec": 0,   "toSec": 3.5 },
+    { "clip": 1, "fromSec": 1.2, "toSec": 4.0 },
+    { "clip": 0, "fromSec": 6.0, "toSec": 8.0 }
+  ],
 
   "captions": [{ "startSec": 2.2, "endSec": 5.0, "text": "صنادل صيف" }],
   "captionStyle": {

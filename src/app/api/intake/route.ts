@@ -80,30 +80,32 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-/** Records a finished upload and returns the code. Called by the send page. */
+/** Records a finished batch of uploads and returns one code. Called by the send page. */
 export async function PUT(request: Request): Promise<Response> {
   try {
     const body = (await request.json()) as {
       key?: string;
-      url?: string;
-      filename?: string;
-      sizeBytes?: number;
+      files?: { url?: string; filename?: string; sizeBytes?: number }[];
     };
 
     if (!keyMatches(body.key)) {
       return Response.json({ error: "This send link is not valid" }, { status: 401 });
     }
-    if (!body.url || !body.filename || !body.sizeBytes) {
-      return Response.json({ error: "url, filename and sizeBytes are required" }, { status: 400 });
+    const files = body.files ?? [];
+    if (files.length === 0 || files.some((f) => !f.url || !f.filename || !f.sizeBytes)) {
+      return Response.json(
+        { error: "files must be a non-empty list of { url, filename, sizeBytes }" },
+        { status: 400 },
+      );
     }
 
+    // One code for the whole batch: he reads out a single code however many clips
+    // he sent, and their order here is the order he picked them.
     const code = await freeCode();
     await putIntake({
       code,
       uploadedAt: new Date().toISOString(),
-      url: body.url,
-      filename: body.filename,
-      sizeBytes: body.sizeBytes,
+      files: files as { url: string; filename: string; sizeBytes: number }[],
     });
 
     return Response.json({ code }, { status: 201 });

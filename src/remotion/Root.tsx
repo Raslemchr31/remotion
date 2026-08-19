@@ -22,12 +22,11 @@ import { MainVideo } from "./MainVideo";
  * always overridden. Only the optional keys can leak.
  */
 export const SAMPLE_EDITS: Edits = {
-  sourceUrl: staticFile("sample.mp4"),
-  sourceDurationSec: 6,
+  clips: [{ sourceUrl: staticFile("sample.mp4"), durationSec: 6, label: "sample.mp4" }],
   fps: 30,
   width: 720,
   height: 1280,
-  trims: [],
+  segments: [],
   captions: [
     { startSec: 2.5, endSec: 5, text: "نموذج ترجمة عربية" },
     { startSec: 5, endSec: 7.5, text: "Exemple de sous-titre" },
